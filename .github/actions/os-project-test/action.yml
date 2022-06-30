@@ -1,0 +1,82 @@
+name: 'OS Project Tests'
+description: 'Run OS project tests'
+
+inputs:
+  ps-folder:
+    required: false
+    description: 'Folder where to checkout repository'
+
+  ps-branch:
+    required: true
+    description: 'Branch to run test form'
+
+  node-version:
+    required: false
+    description: 'Node version to run tests with'
+    default: '16'
+
+  npm-version:
+    required: false
+    description: 'NPM version to run test with'
+    default: '7'
+
+  command-to-run:
+    required: false
+    description: 'Command to run'
+    default: 'sanity'
+
+  remove-install-test:
+    required: false
+    description: 'True to run install to'
+    default: 'false'
+
+
+runs:
+  using: composite
+
+  steps:
+    - uses: actions/checkout@v3
+      with:
+        repository: PrestaShop/PrestaShop
+        ref: ${{ inputs.ps-branch }}
+        path: ${{ inputs.ps-folder }}
+
+    - name: Setup Node
+      uses: actions/setup-node@v2
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Setup Npm
+      shell: bash
+      run: npm install -g npm@${{ inputs.npm-version }}
+
+    # Install mailutils to successfully send emails
+    - name: Setup mailutils
+      shell: bash
+      run: sudo apt-get install -y apt-utils mailutils
+
+    - name: Install dependencies
+      working-directory: '${{ inputs.ps-folder }}/tests/UI'
+      shell: bash
+      run: npm install
+
+    - name: Delete install script if wanted
+      working-directory: '${{ inputs.ps-folder }}/tests/UI'
+      if: ${{ (inputs.command-to-run == 'sanity' or || inputs.command-to-run == 'sanity:fast-fail') && inputs.remove-install-test == 'true' }}
+      shell: bash
+      run: rm -rf 'campaigns/sanity/01_installShop'
+
+    - name: Run tests
+      id: run-test
+      working-directory: '${{ inputs.ps-folder }}/tests/UI'
+      shell: bash
+      run: npm run test:${{ inputs.command-to-run }}
+      env:
+        TAKE_SCREENSHOT_AFTER_FAIL: 'true'
+
+    - uses: actions/upload-artifact@v2
+      working-directory: '${{ inputs.ps-folder }}/tests/UI'
+      if: steps.run-test.outcome != 'success'
+      with:
+        name: screenshots-${{ matrix.php }}
+        path: ./screenshots/
