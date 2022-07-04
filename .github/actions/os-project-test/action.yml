@@ -74,9 +74,13 @@ runs:
       env:
         TAKE_SCREENSHOT_AFTER_FAIL: 'true'
 
+    - run: echo "MY_COMMAND=$( echo -e '${{ matrix.TEST_COMMAND }}' | tr  ':' '-'  )" >> $GITHUB_ENV
+      shell: bash
+      if: steps.run-test.outcome != 'success'
+
     - uses: actions/upload-artifact@v2
       working-directory: '${{ inputs.ps-folder }}/tests/UI'
       if: steps.run-test.outcome != 'success'
       with:
-        name: screenshots-${{ matrix.php }}
+        name: screenshots-${{ env.MY_COMMAND }}
         path: ./screenshots/
