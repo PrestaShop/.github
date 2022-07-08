@@ -62,7 +62,7 @@ runs:
 
     - name: Delete install script if wanted
       working-directory: '${{ inputs.ps-folder }}/tests/UI'
-      if: ${{ (inputs.command-to-run == 'sanity' or || inputs.command-to-run == 'sanity:fast-fail') && inputs.remove-install-test == 'true' }}
+      if: ${{ (inputs.command-to-run == 'sanity' || inputs.command-to-run == 'sanity:fast-fail') && inputs.remove-install-test == 'true' }}
       shell: bash
       run: rm -rf 'campaigns/sanity/01_installShop'
 
@@ -79,8 +79,7 @@ runs:
       if: steps.run-test.outcome != 'success'
 
     - uses: actions/upload-artifact@v2
-      working-directory: '${{ inputs.ps-folder }}/tests/UI'
       if: steps.run-test.outcome != 'success'
       with:
-        name: screenshots-${{ env.MY_COMMAND }}
+        name: '${{ inputs.ps-folder }}/tests/UI/screenshots-${{ inputs.ps-branch }}-${{ env.MY_COMMAND }}'
         path: ./screenshots/
