@@ -81,5 +81,5 @@ runs:
     - uses: actions/upload-artifact@v2
       if: steps.run-test.outcome != 'success'
       with:
-        name: '${{ inputs.ps-folder }}/tests/UI/screenshots-${{ inputs.ps-branch }}-${{ env.MY_COMMAND }}'
-        path: ./screenshots/
+        name: 'screenshots-${{ inputs.ps-branch }}-${{ env.MY_COMMAND }}'
+        path: '${{ inputs.ps-folder }}/tests/UI/screenshots'
