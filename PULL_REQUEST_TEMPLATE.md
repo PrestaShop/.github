@@ -11,6 +11,6 @@ https://devdocs.prestashop-project.org/8/contribute/contribution-guidelines/#pul
 | Type?             | bug fix / improvement / new feature / refactor
 | BC breaks?        | yes / no
 | Deprecations?     | yes / no
-| Fixed ticket?     | Fixes {paste the issue here}.
-| Sponsor company   | Your company name goes here
-| How to test?      | Please indicate how to best verify that this change works as expected.
+| Fixed ticket?     | Fixes #{issue URL here}, Fixes #{another issue URL here}
+| Sponsor company   | Your company or customer's name goes here (if applicable).
+| How to test?      | Indicate how to verify that this change works as expected.
