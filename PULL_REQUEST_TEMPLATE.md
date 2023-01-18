@@ -7,12 +7,10 @@ https://devdocs.prestashop-project.org/8/contribute/contribution-guidelines/#pul
 
 | Questions         | Answers
 | ------------------| -------------------------------------------------------
-| Description?      | Please be specific when describing the PR. Every detail helps: What are you changing? Why?
-| Type?             | bug fix / improvement / new feature / refacto / critical
+| Description?      | Please be specific when describing this change. What did you change? Why?
+| Type?             | bug fix / improvement / new feature / refactor
 | BC breaks?        | yes / no
 | Deprecations?     | yes / no
-| Fixed ticket?     | Fixes {paste the issue here}.
-| How to test?      | Please indicate how to best verify that this PR is correct.
-| Possible impacts? | Please indicate what parts of the software we need to check to make sure everything is alright.
-
-<!-- Click the form's "Preview" button to make sure the table is functional in GitHub. Thank you! -->
+| Fixed ticket?     | Fixes #{issue URL here}, Fixes #{another issue URL here}
+| Sponsor company   | Your company or customer's name goes here (if applicable).
+| How to test?      | Indicate how to verify that this change works as expected.
