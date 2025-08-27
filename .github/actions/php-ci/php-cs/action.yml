@@ -1,0 +1,32 @@
+name: "PHP-CS-Fixer"
+description: "Check PHP coding standards with PHP-CS-Fixer"
+
+inputs:
+  php-version:
+    description: "PHP version to use"
+    required: false
+    default: "8.1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+
+    - uses: actions/checkout@v4
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: vendor
+        key: php-${{ hashFiles('composer.lock') }}
+
+    - name: Install dependencies
+      run: composer install
+      shell: bash
+
+    - name: Run PHP-CS-Fixer
+      run: ./vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no --diff-format udiff
+      shell: bash
