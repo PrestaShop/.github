@@ -1,0 +1,196 @@
+name: 'PrestaShop PHPStan Analysis'
+description: 'Run PHPStan analysis on PrestaShop modules using existing configuration files'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  php-version:
+    description: "PHP version to use"
+    required: false
+    default: "8.1"
+  
+  presta-version:
+    description: "PrestaShop version to test against"
+    required: true
+    default: "latest"
+  
+  module-name:
+    description: "The module name"
+    required: true
+
+  phpstan-version:
+    description: "PHPStan version to use"
+    required: false
+    default: "^2.1"
+  
+  phpstan-level:
+    description: "PHPStan analysis level (0-9, optional)"
+    required: false
+      
+  phpstan-config:
+    description: "Path to additional PHPStan config file to merge with ps-module-extension.neon"
+    required: false
+    default: ""
+
+  composer-version:
+    description: "Composer version to use"
+    required: false
+    default: "v2"
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: mbstring, xml, ctype, iconv, intl, dom, zip, curl, simplexml, hash
+        tools: composer:${{ inputs.composer-version }}
+        coverage: none
+
+    - name: Get Composer Cache Directory
+      id: composer-cache
+      shell: bash
+      run: |
+        echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-${{ inputs.php-version }}-${{ inputs.presta-version }}-${{ hashFiles('**/composer.lock', '**/composer.json') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-${{ inputs.php-version }}-${{ inputs.presta-version }}-
+          ${{ runner.os }}-composer-${{ inputs.php-version }}-
+          ${{ runner.os }}-composer-
+
+    - uses: actions/checkout@v3
+      name: Checkout PrestaShop repository
+      with:
+        fetch-depth: 0
+        repository: PrestaShop/PrestaShop
+        path: prestashop
+        ref: ${{ inputs.presta-version }}
+
+    - name: Install PrestaShop dependencies
+      shell: bash
+      working-directory: prestashop
+      run: |
+        echo "Installing PrestaShop Composer dependencies..."
+        composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader
+
+    - name: Copy module to PrestaShop
+      shell: bash
+      run: |
+        echo "Copying module ${{ inputs.module-name }} to PrestaShop modules directory..."
+        rm -rf prestashop/modules/${{ inputs.module-name }}
+        mkdir -p prestashop/modules/${{ inputs.module-name }}
+        cp -r ${{ inputs.module-name }}/* prestashop/modules/${{ inputs.module-name }}
+        ls -l prestashop/modules/${{ inputs.module-name }}
+        echo "Module copied successfully"
+
+    - name: Install module dependencies
+      shell: bash
+      working-directory: prestashop/modules/${{ inputs.module-name }}
+      run: |
+        if [ -f "composer.json" ]; then
+          echo "Installing module Composer dependencies (including dev)..."
+          composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader --dev
+          echo "Module dependencies installed successfully"
+        else
+          echo "No composer.json found in module, skipping dependency installation"
+        fi
+
+    - name: Run PHPStan Analysis
+      shell: bash
+      working-directory: prestashop/modules/${{ inputs.module-name }}
+      run: |
+        echo "=== PHPStan Analysis ==="
+        echo "PHP Version: $(php -v | head -n1)"
+        echo "Composer Version: $(composer --version)"
+        echo "PrestaShop Version: ${{ inputs.presta-version }}"
+        echo "Module: ${{ inputs.module-name }}"
+        echo "PHPStan Version: $(phpstan --version)"
+        echo "========================"
+        echo "Running PHPStan from module directory..."
+        
+        if [ ! -f "../../vendor/bin/phpstan" ]; then
+          echo "❌ PHPStan not found in PrestaShop vendor/bin/phpstan"
+          echo "Installing PHPStan ${{ inputs.phpstan-version }}..."
+          cd ../../
+          composer require --dev phpstan/phpstan:${{ inputs.phpstan-version }} --no-interaction
+          cd -
+        fi
+        
+        PHPSTAN_CONFIG="vendor/prestashop/php-dev-tools/phpstan/ps-module-extension.neon"
+        
+        if [ -f "$PHPSTAN_CONFIG" ]; then
+          echo "✓ Using Php-dev-tools PHPStan configuration: $PHPSTAN_CONFIG"
+        else
+          echo "❌ Php-dev-tools PHPStan configuration not found: $PHPSTAN_CONFIG"
+          echo "Running PHPStan without configuration file..."
+          PHPSTAN_CONFIG=""
+        fi
+        
+        echo "Setting PrestaShop environment variable..."
+        export _PS_ROOT_DIR_="../../"
+        echo "✓ Set _PS_ROOT_DIR_=$_PS_ROOT_DIR_"
+        
+        # Add target directories (check which directories exist and only include them (excluding vendor and node_modules by specifying only what to analyze))
+        TARGET_DIRS=()
+        if [ -d "controllers" ]; then
+          TARGET_DIRS+=("controllers/")
+        fi
+        if [ -d "src" ]; then
+          TARGET_DIRS+=("src/")
+        fi
+        if [ -d "upgrade" ]; then
+          TARGET_DIRS+=("upgrade/")
+        fi
+        if [ -d "classes" ]; then
+          TARGET_DIRS+=("classes/")
+        fi
+
+        if [ -n "${{ inputs.phpstan-config }}" ]; then
+          echo "Processing additional PHPStan configuration..."
+          
+          # Check if the config file exists in the module directory
+          MODULE_CONFIG_FILE="${{ inputs.phpstan-config }}"
+          if [ -f "$MODULE_CONFIG_FILE" ]; then
+            echo "✓ Found additional PHPStan config: $MODULE_CONFIG_FILE"
+            
+            # Create a temporary PHPStan config that includes both configs
+            TEMP_CONFIG="phpstan-temp.neon"
+            echo "includes:" > "$TEMP_CONFIG"
+            echo "  - $PHPSTAN_CONFIG" >> "$TEMP_CONFIG"
+            echo "  - $MODULE_CONFIG_FILE" >> "$TEMP_CONFIG"
+            
+            # Use the temporary config instead of the original
+            PHPSTAN_CONFIG="$TEMP_CONFIG"
+            echo "✓ Created merged PHPStan configuration: $TEMP_CONFIG"
+            echo "Generated config content:"
+            cat "$TEMP_CONFIG"
+          else
+            echo "⚠️  No additional PHPStan config file found: $MODULE_CONFIG_FILE"
+          fi
+        fi
+        
+        # Build the final command array
+        PHPSTAN_ARGS=("analyse" "--verbose" "--error-format=github")
+        
+        # Add configuration file if found
+        if [ -n "$PHPSTAN_CONFIG" ]; then
+          PHPSTAN_ARGS+=("--configuration=$PHPSTAN_CONFIG")
+        fi
+        
+        # Add level if specified
+        if [ -n "${{ inputs.phpstan-level }}" ]; then
+          PHPSTAN_ARGS+=("--level=${{ inputs.phpstan-level }}")
+        fi
+        
+        # Add target directories
+        PHPSTAN_ARGS+=("${TARGET_DIRS[@]}")
+        
+        echo "Executing: ../../vendor/bin/phpstan ${PHPSTAN_ARGS[*]}"
+        ../../vendor/bin/phpstan "${PHPSTAN_ARGS[@]}"
