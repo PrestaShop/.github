@@ -1,0 +1,43 @@
+name: 'Build module and create artifact'
+description: 'Action for building module release and upload artifact'
+
+inputs:
+  makefile_rule:
+    description: 'Custom Makefile rule to execute for building and cleaning'
+    required: false
+    default: ''
+    type: string
+  include_hidden_files:
+    description: 'Include hidden files in archive (clean the confidential ones with makefile_rule)'
+    required: false
+    default: false
+    type: boolean
+
+runs:
+  using: composite
+
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+    - name: Install composer dependencies
+      shell: bash
+      run: composer install --no-dev -o
+    - name: Custom build and clean via Makefile
+      if: ${{ inputs.makefile_rule != '' }}
+      shell: bash
+      run: make ${{ inputs.makefile_rule }}
+    - name: Clean-up project
+      uses: PrestaShopCorp/github-action-clean-before-deploy@v1.0
+    - name: Prepare auto-index tool
+      shell: bash
+      run: composer global require prestashop/autoindex
+    - name: Generate index.php
+      shell: bash
+      run: ~/.composer/vendor/bin/autoindex
+    - name: Create & upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.event.repository.name }}
+        path: /home/runner/work/${{ github.event.repository.name }}
+        # Include hidden files like .env.dist that may require for the correct behaviour of the module
+        include-hidden-files: ${{ inputs.include_hidden_files }}
