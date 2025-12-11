@@ -49,22 +49,6 @@ runs:
         tools: composer:${{ inputs.composer-version }}
         coverage: none
 
-    - name: Get Composer Cache Directory
-      id: composer-cache
-      shell: bash
-      run: |
-        echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
-    - name: Cache Composer dependencies
-      uses: actions/cache@v4
-      with:
-        path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-composer-${{ inputs.php-version }}-${{ inputs.presta-version }}-${{ hashFiles('**/composer.lock', '**/composer.json') }}
-        restore-keys: |
-          ${{ runner.os }}-composer-${{ inputs.php-version }}-${{ inputs.presta-version }}-
-          ${{ runner.os }}-composer-${{ inputs.php-version }}-
-          ${{ runner.os }}-composer-
-
     - uses: actions/checkout@v3
       name: Checkout PrestaShop repository
       with:
