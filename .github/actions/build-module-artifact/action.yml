@@ -12,6 +12,11 @@ inputs:
     required: false
     default: false
     type: boolean
+  autoindex_excluded_folders:
+    description: 'List of folders that should not be autoindexed, separated by commas'
+    required: false
+    default: ''
+    type: string
 
 runs:
   using: composite
@@ -33,7 +38,7 @@ runs:
       run: composer global require prestashop/autoindex
     - name: Generate index.php
       shell: bash
-      run: ~/.composer/vendor/bin/autoindex
+      run: ~/.composer/vendor/bin/autoindex ${{ inputs.autoindex_excluded_folders != '' && format('--exclude={0}', inputs.autoindex_excluded_folders) || '' }}
     - name: Create & upload artifact
       uses: actions/upload-artifact@v4
       with:
