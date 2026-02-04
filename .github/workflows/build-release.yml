@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      autoindex_excluded_folders:
+        description: 'List of folders that should not be autoindexed, separated by commas'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build_module:
@@ -21,7 +26,8 @@ jobs:
       - uses: PrestaShop/.github/.github/actions/build-module-artifact@master
         with:
           makefile_rule: ${{ inputs.makefile_rule }}
-          include-hidden-files: ${{ inputs.include_hidden_files }}
+          include_hidden_files: ${{ inputs.include_hidden_files }}
+          autoindex_excluded_folders: ${{ inputs.autoindex_excluded_folders }}
 
   update_release_draft:
     runs-on: ubuntu-latest
