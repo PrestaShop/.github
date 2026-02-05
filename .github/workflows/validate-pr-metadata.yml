@@ -18,6 +18,10 @@ jobs:
     steps:
       - name: Check PR Metadata
         uses: actions/github-script@v7
+        env:
+          # Pass inputs via env for added safety
+          ACCEPTED_CATEGORIES: ${{ inputs.accepted_categories }}
+          ACCEPTED_TYPES: ${{ inputs.accepted_types }}
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -26,17 +30,14 @@ jobs:
             const author = pr.user.login;
             const milestone = pr.milestone ? pr.milestone.title : "";
 
-            const ACCEPTED_CATEGORIES = '${{ inputs.accepted_categories }}'.split(',').map(s => s.trim().toUpperCase());
-            const ACCEPTED_TYPES = '${{ inputs.accepted_types }}'.split(',').map(s => s.trim().toLowerCase());
-            const BUMP_PR_AUTHOR = ['dependabot[bot]', 'github-actions[bot]', '@github-actions[bot]'];
+            const categories = process.env.ACCEPTED_CATEGORIES.split(',').map(s => s.trim().toUpperCase());
+            const types = process.env.ACCEPTED_TYPES.split(',').map(s => s.trim().toLowerCase());
+            
+            const BUMP_PR_AUTHOR = ['dependabot[bot]', 'github-actions[bot]'];
             const BUMP_PR_TITLE_PREFIX = 'Bump';
 
-            function isBumpPullRequest(title, author) {
-              return title.startsWith(BUMP_PR_TITLE_PREFIX) && BUMP_PR_AUTHOR.includes(author);
-            }
-
-            if (isBumpPullRequest(title, author)) {
-              console.log("Bump PR detected. Skipping manual metadata validation.");
+            if (title.startsWith(BUMP_PR_TITLE_PREFIX) && BUMP_PR_AUTHOR.includes(author)) {
+              console.log("Bump PR detected. Skipping validation.");
               return;
             }
 
@@ -44,31 +45,32 @@ jobs:
 
             // Helper to build pattern
             function buildPattern(propertyName, captureGroup) {
-              return new RegExp('^(?:\s*\|?\s*)' + propertyName + '\??\s*\|\s*(' + captureGroup + ')(?:\s*\|?\s*)$', 'im');
+              // Supports formats: "| Category | FO |" or "Category: FO"
+              return new RegExp('^\\s*\\|?\\s*' + propertyName + '\\??\\s*[|:]\\s*(' + captureGroup + ')\\s*\\|?\\s*$', 'im');
             }
 
-            // Extract Category
-            const categoryMatch = body.match(buildPattern('Category', '[a-z]{2}'));
+            // Category validation
+            const categoryMatch = body.match(buildPattern('Category', '[a-zA-Z]{2}'));
             const category = categoryMatch ? categoryMatch[1].trim().toUpperCase() : "";
-            if (!ACCEPTED_CATEGORIES.includes(category)) {
-              errors.push(`Invalid category: "${category}". Expected one of: ${ACCEPTED_CATEGORIES.join(', ')}`);
+            if (!categories.includes(category)) {
+              errors.push(`Invalid category: "${category}". Expected one of: ${categories.join(', ')}`);
             }
 
-            // Extract Type
-            const typeMatch = body.match(buildPattern('Type', '[a-zA-Z\s]+'));
+            // Type validation
+            const typeMatch = body.match(buildPattern('Type', '[a-zA-Z\\s]+'));
             const type = typeMatch ? typeMatch[1].trim().toLowerCase() : "";
-            if (!ACCEPTED_TYPES.includes(type)) {
-              errors.push(`Invalid type: "${type}". Expected one of: ${ACCEPTED_TYPES.join(', ')}`);
+            if (!types.includes(type)) {
+              errors.push(`Invalid type: "${type}". Expected one of: ${types.join(', ')}`);
             }
 
-            // Validate Title
+            // Title validation (must start with uppercase)
             if (!/^[A-Z]/.test(title)) {
-              errors.push('Pull Request title does not start with an uppercase letter');
+              errors.push('Pull Request title must start with an uppercase letter');
             }
 
-            // Validate Milestone
+            // Milestone validation
             if (!milestone) {
-              errors.push('No milestone defined');
+              errors.push('No milestone defined for this Pull Request');
             }
 
             if (errors.length > 0) {
@@ -76,4 +78,4 @@ jobs:
             } else {
               console.log("PR validation successful!");
             }
-
+              
