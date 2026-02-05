@@ -19,7 +19,7 @@ jobs:
       - name: Check PR Metadata
         uses: actions/github-script@v7
         env:
-          # Pass inputs via env for added safety
+          # Pass inputs via env variables for security and ease of access in JS
           ACCEPTED_CATEGORIES: ${{ inputs.accepted_categories }}
           ACCEPTED_TYPES: ${{ inputs.accepted_types }}
         with:
@@ -36,46 +36,54 @@ jobs:
             const BUMP_PR_AUTHOR = ['dependabot[bot]', 'github-actions[bot]'];
             const BUMP_PR_TITLE_PREFIX = 'Bump';
 
+            // Bypass validation for automated dependency updates (bots)
             if (title.startsWith(BUMP_PR_TITLE_PREFIX) && BUMP_PR_AUTHOR.includes(author)) {
-              console.log("Bump PR detected. Skipping validation.");
+              console.log("Bump PR detected. Skipping metadata validation.");
               return;
             }
 
             const errors = [];
 
-            // Helper to build pattern
-            function buildPattern(propertyName, captureGroup) {
-              // Supports formats: "| Category | FO |" or "Category: FO"
-              return new RegExp('^\\s*\\|?\\s*' + propertyName + '\\??\\s*[|:]\\s*(' + captureGroup + ')\\s*\\|?\\s*$', 'im');
+            /**
+             * Regex Helper
+             * Captures the content of a table cell or a list item.
+             * Matches: "| Category | FO |" or "Category: FO"
+             * Captures everything until the next pipe (|) or newline (\n)
+             */
+            function buildPattern(propertyName) {
+              // Note: Double backslashes (\\) are required for the String-to-RegExp constructor
+              return new RegExp('^\\s*\\|?\\s*' + propertyName + '\\??\\s*[:|]\\s*([^|\\n]+)', 'im');
             }
 
-            // Category validation
-            const categoryMatch = body.match(buildPattern('Category', '[a-zA-Z]{2}'));
-            const category = categoryMatch ? categoryMatch[1].trim().toUpperCase() : "";
-            if (!categories.includes(category)) {
-              errors.push(`Invalid category: "${category}". Expected one of: ${categories.join(', ')}`);
+            // 1. Validate Category
+            const categoryMatch = body.match(buildPattern('Category'));
+            const categoryRaw = categoryMatch ? categoryMatch[1].trim().toUpperCase() : "";
+
+            if (!categories.includes(categoryRaw)) {
+              errors.push(`Invalid Category: "${categoryRaw || 'not found'}". You must choose exactly one from: ${categories.join(', ')}`);
             }
 
-            // Type validation
-            const typeMatch = body.match(buildPattern('Type', '[a-zA-Z\\s]+'));
-            const type = typeMatch ? typeMatch[1].trim().toLowerCase() : "";
-            if (!types.includes(type)) {
-              errors.push(`Invalid type: "${type}". Expected one of: ${types.join(', ')}`);
+            // 2. Validate Type
+            const typeMatch = body.match(buildPattern('Type'));
+            const typeRaw = typeMatch ? typeMatch[1].trim().toLowerCase() : "";
+
+            if (!types.includes(typeRaw)) {
+              errors.push(`Invalid Type: "${typeRaw || 'not found'}". You must choose exactly one from: ${types.join(', ')}`);
             }
 
-            // Title validation (must start with uppercase)
+            // 3. Validate Title (Must start with an uppercase letter)
             if (!/^[A-Z]/.test(title)) {
               errors.push('Pull Request title must start with an uppercase letter');
             }
 
-            // Milestone validation
+            // 4. Validate Milestone
             if (!milestone) {
               errors.push('No milestone defined for this Pull Request');
             }
 
+            // Final Evaluation
             if (errors.length > 0) {
-              core.setFailed("PR validation failed:\n- " + errors.join('\n- '));
+              core.setFailed("PR Metadata Validation Failed:\n- " + errors.join('\n- '));
             } else {
-              console.log("PR validation successful!");
+              console.log("PR Metadata Validation Successful!");
             }
-              
