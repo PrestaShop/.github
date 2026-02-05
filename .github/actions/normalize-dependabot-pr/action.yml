@@ -1,0 +1,126 @@
+name: 'Normalize Dependabot PR'
+description: 'Normalize title and description of Dependabot pull requests to match the standard PR template'
+branding:
+  icon: 'git-pull-request'
+  color: 'blue'
+
+inputs:
+  github-token:
+    description: 'Token to update the pull request (default: GITHUB_TOKEN)'
+    required: false
+    default: ${{ github.token }}
+  default-branch:
+    description: 'Default branch name for the Branch? row (e.g. develop, main)'
+    required: false
+    default: 'develop'
+  default-category:
+    description: 'Default category for the Category? row (must match validator, e.g. CO, TE)'
+    required: false
+    default: 'CO'
+  default-type:
+    description: 'Default type for the Type? row (e.g. improvement)'
+    required: false
+    default: 'improvement'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Normalize Dependabot PR
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        DEFAULT_CATEGORY: ${{ inputs.default-category }}
+        DEFAULT_TYPE: ${{ inputs.default-type }}
+      run: |
+        set -e
+        EVENT_JSON=$(cat "$GITHUB_EVENT_PATH")
+        AUTHOR=$(echo "$EVENT_JSON" | jq -r '.pull_request.user.login // ""')
+        if [ "$AUTHOR" != "dependabot[bot]" ]; then
+          echo "Not a Dependabot PR, skipping normalization."
+          exit 0
+        fi
+
+        PR_NUMBER=$(echo "$EVENT_JSON" | jq -r '.pull_request.number')
+        CURRENT_TITLE=$(echo "$EVENT_JSON" | jq -r '.pull_request.title // ""')
+        CURRENT_BODY=$(echo "$EVENT_JSON" | jq -r '.pull_request.body // ""')
+        CURRENT_BODY=$(echo "$CURRENT_BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+        # --- Title normalization ---
+        # Target: "Chore(deps): bump <dependency> from <old> to <new> in <path>"
+        NEW_TITLE="$CURRENT_TITLE"
+        LOWER_TITLE=$(echo "$NEW_TITLE" | tr '[:upper:]' '[:lower:]')
+        if [[ "$LOWER_TITLE" == "bump "* ]] && [[ "$LOWER_TITLE" != "chore(deps): bump"* ]]; then
+          FIRST_CHAR=$(echo "${NEW_TITLE:0:1}" | tr '[:upper:]' '[:lower:]')
+          REST="${NEW_TITLE:1}"
+          NEW_TITLE="Chore(deps): ${FIRST_CHAR}${REST}"
+        fi
+        if [ -n "$NEW_TITLE" ]; then
+          FIRST_CHAR=$(echo "${NEW_TITLE:0:1}" | tr '[:lower:]' '[:upper:]')
+          REST="${NEW_TITLE:1}"
+          NEW_TITLE="${FIRST_CHAR}${REST}"
+        fi
+
+        # --- Body normalization (template table at top) ---
+        TEMPLATE_BLOCK="| Questions | Answers |
+        | --- | --- |
+        | Branch? | ${DEFAULT_BRANCH} |
+        | Description? | Dependabot update |
+        | Type? | ${DEFAULT_TYPE} |
+        | Category? | ${DEFAULT_CATEGORY} |
+        | BC breaks? | no |
+        | Deprecations? | no |
+        | Fixed ticket? | ~ |
+        | How to test? | ~ |"
+        TEMPLATE_BLOCK=$(echo "$TEMPLATE_BLOCK" | sed 's/^[[:space:]]*//')
+
+        MARKER="| Category? |"
+        TYPE_MARKER="| Type? |"
+        NEW_BODY="$CURRENT_BODY"
+        if ! echo "$CURRENT_BODY" | grep -qF "$MARKER" || ! echo "$CURRENT_BODY" | grep -qF "$TYPE_MARKER"; then
+          if [ -n "$CURRENT_BODY" ]; then
+            NEW_BODY="${TEMPLATE_BLOCK}"$'\n\n'"${CURRENT_BODY}"
+          else
+            NEW_BODY="$TEMPLATE_BLOCK"
+          fi
+        fi
+
+        TITLE_CHANGED=false
+        BODY_CHANGED=false
+        [ "$NEW_TITLE" != "$CURRENT_TITLE" ] && TITLE_CHANGED=true
+        [ "$NEW_BODY" != "$CURRENT_BODY" ] && BODY_CHANGED=true
+
+        if ! $TITLE_CHANGED && ! $BODY_CHANGED; then
+          echo "PR already normalized, no update needed."
+          exit 0
+        fi
+
+        REPO="$GITHUB_REPOSITORY"
+        API_URL="https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}"
+
+        UPDATE_JSON="{}"
+        if $TITLE_CHANGED; then
+          UPDATE_JSON=$(echo "$UPDATE_JSON" | jq --arg t "$NEW_TITLE" '. + {title: $t}')
+        fi
+        if $BODY_CHANGED; then
+          UPDATE_JSON=$(echo "$UPDATE_JSON" | jq --arg b "$NEW_BODY" '. + {body: $b}')
+        fi
+
+        HTTP_RESPONSE=$(mktemp)
+        HTTP_CODE=$(curl -sS -w "%{http_code}" -o "$HTTP_RESPONSE" -X PATCH \
+          -H "Authorization: token ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          -H "Content-Type: application/json" \
+          -d "$UPDATE_JSON" \
+          "$API_URL")
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          echo "::error::GitHub API PATCH failed with HTTP $HTTP_CODE"
+          cat "$HTTP_RESPONSE" | jq -r '.message // .' 2>/dev/null || cat "$HTTP_RESPONSE"
+          rm -f "$HTTP_RESPONSE"
+          exit 1
+        fi
+        rm -f "$HTTP_RESPONSE"
+
+        echo "Dependabot PR normalized successfully."
+        $TITLE_CHANGED && echo "Title updated."
+        $BODY_CHANGED && echo "Description updated with standard template."
