@@ -19,7 +19,7 @@ jobs:
       - name: Check PR Metadata
         uses: actions/github-script@v7
         env:
-          # Pass inputs via env variables for security and ease of access in JS
+          # Using env variables to prevent script injection and handle special characters
           ACCEPTED_CATEGORIES: ${{ inputs.accepted_categories }}
           ACCEPTED_TYPES: ${{ inputs.accepted_types }}
         with:
@@ -36,42 +36,39 @@ jobs:
             const BUMP_PR_AUTHOR = ['dependabot[bot]', 'github-actions[bot]'];
             const BUMP_PR_TITLE_PREFIX = 'Bump';
 
-            // Bypass validation for automated dependency updates (bots)
+            // Skip validation for dependency update bots
             if (title.startsWith(BUMP_PR_TITLE_PREFIX) && BUMP_PR_AUTHOR.includes(author)) {
-              console.log("Bump PR detected. Skipping metadata validation.");
+              console.log("Bump PR detected. Skipping validation.");
               return;
             }
 
             const errors = [];
 
             /**
-             * Regex Helper
-             * Captures the content of a table cell or a list item.
-             * Matches: "| Category | FO |" or "Category: FO"
-             * Captures everything until the next pipe (|) or newline (\n)
+             * When using 'new RegExp("string")', backslashes must be doubled (\\).
+             * This pattern handles: "| Category? | value |" or "Category: value"
              */
             function buildPattern(propertyName) {
-              // Note: Double backslashes (\\) are required for the String-to-RegExp constructor
-              return new RegExp('^\\s*\\|?\\s*' + propertyName + '\\??\\s*[:|]\\s*([^|\\n]+)', 'im');
+              return new RegExp('^\\s*\\|?\\s*' + propertyName + '\\??\\s*[|:]\\s*([^|\\n]+)', 'im');
             }
 
             // 1. Validate Category
             const categoryMatch = body.match(buildPattern('Category'));
             const categoryRaw = categoryMatch ? categoryMatch[1].trim().toUpperCase() : "";
-
+            
             if (!categories.includes(categoryRaw)) {
-              errors.push(`Invalid Category: "${categoryRaw || 'not found'}". You must choose exactly one from: ${categories.join(', ')}`);
+              errors.push(`Invalid Category: "${categoryRaw || 'empty'}". Expected one of: ${categories.join(', ')}`);
             }
 
             // 2. Validate Type
             const typeMatch = body.match(buildPattern('Type'));
             const typeRaw = typeMatch ? typeMatch[1].trim().toLowerCase() : "";
-
+            
             if (!types.includes(typeRaw)) {
-              errors.push(`Invalid Type: "${typeRaw || 'not found'}". You must choose exactly one from: ${types.join(', ')}`);
+              errors.push(`Invalid Type: "${typeRaw || 'empty'}". Expected one of: ${types.join(', ')}`);
             }
 
-            // 3. Validate Title (Must start with an uppercase letter)
+            // 3. Validate Title (Starts with Uppercase)
             if (!/^[A-Z]/.test(title)) {
               errors.push('Pull Request title must start with an uppercase letter');
             }
@@ -81,9 +78,9 @@ jobs:
               errors.push('No milestone defined for this Pull Request');
             }
 
-            // Final Evaluation
+            // Report Results
             if (errors.length > 0) {
-              core.setFailed("PR Metadata Validation Failed:\n- " + errors.join('\n- '));
+              core.setFailed("PR validation failed:\n- " + errors.join('\n- '));
             } else {
-              console.log("PR Metadata Validation Successful!");
+              console.log("PR validation successful!");
             }
