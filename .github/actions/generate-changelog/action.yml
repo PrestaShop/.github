@@ -1,0 +1,57 @@
+name: 'Generate Changelog'
+description: 'Prepare release changelog and contributors list from merged PRs between two git refs.'
+
+inputs:
+  previous_ref:
+    description: 'Previous git ref - tag, branch or SHA (e.g. 9.0.2)'
+    required: true
+  target_ref:
+    description: 'Target git ref - tag, branch or SHA (e.g. HEAD)'
+    required: false
+    default: 'HEAD'
+  next_version:
+    description: 'Next version for the changelog (e.g. 9.1.0 Beta 1)'
+    required: true
+  release_date:
+    description: 'Release date (YYYY-MM-DD). Empty = today'
+    required: false
+    default: ''
+  repository:
+    description: 'GitHub repository (owner/repo). Defaults to the current repository.'
+    required: false
+    default: ${{ github.repository }}
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  changelog:
+    description: 'Changelog sections (plain text)'
+    value: ${{ steps.run.outputs.changelog }}
+  changelog_formatted:
+    description: 'Changelog sections with GitHub URLs'
+    value: ${{ steps.run.outputs.changelog_formatted }}
+  contributors:
+    description: 'Contributors list (CSV)'
+    value: ${{ steps.run.outputs.contributors }}
+  contributors_grid:
+    description: 'Contributors grid shortcode'
+    value: ${{ steps.run.outputs.contributors_grid }}
+  new_contributors:
+    description: 'New contributors list (CSV)'
+    value: ${{ steps.run.outputs.new_contributors }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate changelog and contributors
+      id: run
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PREVIOUS_REF: ${{ inputs.previous_ref }}
+        TARGET_REF: ${{ inputs.target_ref }}
+        NEXT_VERSION: ${{ inputs.next_version }}
+        RELEASE_DATE: ${{ inputs.release_date }}
+        GH_REPOSITORY: ${{ inputs.repository }}
+      run: bash ${{ github.action_path }}/../../scripts/generate-changelog.sh
