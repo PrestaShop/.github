@@ -1,0 +1,104 @@
+name: 'Validate PR Metadata'
+description: 'Validate pull request title, body template (category, type), and milestone'
+branding:
+  icon: 'check-circle'
+  color: 'orange'
+
+inputs:
+  accepted_categories:
+    description: 'List of accepted categories (comma-separated)'
+    required: false
+    default: 'FO, CO, BO, WS, IN, TE, LO, ME, PM'
+  accepted_types:
+    description: 'List of accepted types (comma-separated)'
+    required: false
+    default: 'bug fix, improvement, refacto, new feature'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check PR Metadata
+      shell: bash
+      env:
+        ACCEPTED_CATEGORIES: ${{ inputs.accepted_categories }}
+        ACCEPTED_TYPES: ${{ inputs.accepted_types }}
+      run: |
+        set -e
+        EVENT_JSON=$(cat "$GITHUB_EVENT_PATH")
+        TITLE=$(echo "$EVENT_JSON" | jq -r '.pull_request.title // ""')
+        BODY=$(echo "$EVENT_JSON" | jq -r '.pull_request.body // ""')
+        AUTHOR=$(echo "$EVENT_JSON" | jq -r '.pull_request.user.login // ""')
+        MILESTONE=$(echo "$EVENT_JSON" | jq -r '.pull_request.milestone.title // ""')
+
+        # Normalize accepted lists to uppercase (categories) and lowercase (types)
+        IFS=',' read -ra CAT_ARR <<< "$ACCEPTED_CATEGORIES"
+        ACCEPTED_CATEGORIES_NORM=""
+        for c in "${CAT_ARR[@]}"; do
+          c=$(echo "$c" | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          ACCEPTED_CATEGORIES_NORM="${ACCEPTED_CATEGORIES_NORM}${c} "
+        done
+
+        IFS=',' read -ra TYP_ARR <<< "$ACCEPTED_TYPES"
+        ACCEPTED_TYPES_NORM=""
+        for t in "${TYP_ARR[@]}"; do
+          t=$(echo "$t" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          ACCEPTED_TYPES_NORM="${ACCEPTED_TYPES_NORM}${t} "
+        done
+
+        BUMP_PR_AUTHORS="dependabot[bot] github-actions[bot] @github-actions[bot]"
+        BUMP_PR_TITLE_PREFIX="Bump"
+
+        is_bump_pr() {
+          local title="$1"
+          local author="$2"
+          [[ "$title" == "$BUMP_PR_TITLE_PREFIX"* ]] || return 1
+          [[ " $BUMP_PR_AUTHORS " == *" $author "* ]] || return 1
+          return 0
+        }
+
+        if is_bump_pr "$TITLE" "$AUTHOR"; then
+          echo "Bump PR detected. Skipping manual metadata validation."
+          exit 0
+        fi
+
+        ERRORS=()
+
+        # Extract Category (2-letter code from table row)
+        CATEGORY_LINE=$(echo "$BODY" | grep -i "Category" | head -1)
+        CATEGORY=""
+        if [ -n "$CATEGORY_LINE" ]; then
+          CATEGORY=$(echo "$CATEGORY_LINE" | grep -oPi 'Category\?\s*\|\s*\K[a-zA-Z]{2}' | head -1 | tr '[:lower:]' '[:upper:]')
+        fi
+        if [ -z "$CATEGORY" ] || [[ " $ACCEPTED_CATEGORIES_NORM" != *" $CATEGORY "* ]]; then
+          ERRORS+=("Invalid category: \"${CATEGORY}\". Expected one of: ${ACCEPTED_CATEGORIES}")
+        fi
+
+        # Extract Type (letters/spaces from table row)
+        TYPE_LINE=$(echo "$BODY" | grep -i "Type" | head -1)
+        TYPE=""
+        if [ -n "$TYPE_LINE" ]; then
+          TYPE=$(echo "$TYPE_LINE" | grep -oPi 'Type\?\s*\|\s*\K[^|]+' | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+        fi
+        if [ -z "$TYPE" ] || [[ " $ACCEPTED_TYPES_NORM" != *" $TYPE "* ]]; then
+          ERRORS+=("Invalid type: \"${TYPE}\". Expected one of: ${ACCEPTED_TYPES}")
+        fi
+
+        # Validate title starts with uppercase
+        if [ -n "$TITLE" ] && ! [[ "${TITLE:0:1}" =~ [A-Z] ]]; then
+          ERRORS+=("Pull Request title does not start with an uppercase letter")
+        fi
+
+        # Validate milestone
+        if [ -z "$MILESTONE" ]; then
+          ERRORS+=("No milestone defined")
+        fi
+
+        if [ ${#ERRORS[@]} -gt 0 ]; then
+          echo "::error::PR validation failed:"
+          for err in "${ERRORS[@]}"; do
+            echo "::error::- $err"
+          done
+          exit 1
+        fi
+
+        echo "PR validation successful!"
