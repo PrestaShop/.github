@@ -24,20 +24,25 @@ runs:
         ACCEPTED_TYPES: ${{ inputs.accepted_types }}
       run: |
         set -e
+
         EVENT_JSON=$(cat "$GITHUB_EVENT_PATH")
         TITLE=$(echo "$EVENT_JSON" | jq -r '.pull_request.title // ""')
         BODY=$(echo "$EVENT_JSON" | jq -r '.pull_request.body // ""')
+        if [ -z "$BODY" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+          PR_NUM=$(echo "$EVENT_JSON" | jq -r '.pull_request.number')
+          REPO=$(echo "$EVENT_JSON" | jq -r '.repository.full_name')
+          BODY=$(curl -sS -f -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${REPO}/pulls/${PR_NUM}" | jq -r '.body // ""') || true
+        fi
+        BODY="${BODY//$'\r'/}"
         AUTHOR=$(echo "$EVENT_JSON" | jq -r '.pull_request.user.login // ""')
         MILESTONE=$(echo "$EVENT_JSON" | jq -r '.pull_request.milestone.title // ""')
 
-        # Normalize accepted lists to uppercase (categories) and lowercase (types)
         IFS=',' read -ra CAT_ARR <<< "$ACCEPTED_CATEGORIES"
         ACCEPTED_CATEGORIES_NORM=""
         for c in "${CAT_ARR[@]}"; do
           c=$(echo "$c" | tr '[:lower:]' '[:upper:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           ACCEPTED_CATEGORIES_NORM="${ACCEPTED_CATEGORIES_NORM}${c} "
         done
-
         IFS=',' read -ra TYP_ARR <<< "$ACCEPTED_TYPES"
         ACCEPTED_TYPES_NORM=""
         for t in "${TYP_ARR[@]}"; do
@@ -47,15 +52,12 @@ runs:
 
         BUMP_PR_AUTHORS="dependabot[bot] github-actions[bot] @github-actions[bot]"
         BUMP_PR_TITLE_PREFIX="Bump"
-
         is_bump_pr() {
-          local title="$1"
-          local author="$2"
+          local title="$1" author="$2"
           [[ "$title" == "$BUMP_PR_TITLE_PREFIX"* ]] || return 1
           [[ " $BUMP_PR_AUTHORS " == *" $author "* ]] || return 1
           return 0
         }
-
         if is_bump_pr "$TITLE" "$AUTHOR"; then
           echo "Bump PR detected. Skipping manual metadata validation."
           exit 0
@@ -63,35 +65,42 @@ runs:
 
         ERRORS=()
 
-        # Extract Category (2-letter code from table row)
-        CATEGORY_LINE=$(echo "$BODY" | grep -i "Category" | head -1)
-        CATEGORY=""
-        if [ -n "$CATEGORY_LINE" ]; then
-          CATEGORY=$(echo "$CATEGORY_LINE" | grep -oPi 'Category\?\s*\|\s*\K[a-zA-Z]{2}' | head -1 | tr '[:lower:]' '[:upper:]')
-        fi
-        if [ -z "$CATEGORY" ] || [[ " $ACCEPTED_CATEGORIES_NORM" != *" $CATEGORY "* ]]; then
-          ERRORS+=("Invalid category: \"${CATEGORY}\". Expected one of: ${ACCEPTED_CATEGORIES}")
-        fi
+        validate_category() {
+          local line cat
+          line=$(echo "$BODY" | grep -i "Category?" | head -1 || true)
+          cat=""
+          [ -n "$line" ] && cat=$(echo "$line" | awk -F'|' '{print $NF}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\r' | tr '[:lower:]' '[:upper:]')
+          if [ -z "$cat" ] || [[ " $ACCEPTED_CATEGORIES_NORM" != *" $cat "* ]]; then
+            ERRORS+=("Invalid category: \"${cat}\". Expected one of: ${ACCEPTED_CATEGORIES}")
+          fi
+        }
 
-        # Extract Type (letters/spaces from table row)
-        TYPE_LINE=$(echo "$BODY" | grep -i "Type" | head -1)
-        TYPE=""
-        if [ -n "$TYPE_LINE" ]; then
-          TYPE=$(echo "$TYPE_LINE" | grep -oPi 'Type\?\s*\|\s*\K[^|]+' | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
-        fi
-        if [ -z "$TYPE" ] || [[ " $ACCEPTED_TYPES_NORM" != *" $TYPE "* ]]; then
-          ERRORS+=("Invalid type: \"${TYPE}\". Expected one of: ${ACCEPTED_TYPES}")
-        fi
+        validate_type() {
+          local line typ
+          line=$(echo "$BODY" | grep -i "Type?" | head -1 || true)
+          typ=""
+          [ -n "$line" ] && typ=$(echo "$line" | awk -F'|' '{print $NF}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          if [ -z "$typ" ] || [[ " $ACCEPTED_TYPES_NORM" != *" $typ "* ]]; then
+            ERRORS+=("Invalid type: \"${typ}\". Expected one of: ${ACCEPTED_TYPES}")
+          fi
+        }
 
-        # Validate title starts with uppercase
-        if [ -n "$TITLE" ] && ! [[ "${TITLE:0:1}" =~ [A-Z] ]]; then
-          ERRORS+=("Pull Request title does not start with an uppercase letter")
-        fi
+        validate_title() {
+          if [ -n "$TITLE" ] && ! [[ "${TITLE:0:1}" =~ [A-Z] ]]; then
+            ERRORS+=("Pull Request title does not start with an uppercase letter")
+          fi
+        }
 
-        # Validate milestone
-        if [ -z "$MILESTONE" ]; then
-          ERRORS+=("No milestone defined")
-        fi
+        validate_milestone() {
+          if [ -z "$MILESTONE" ]; then
+            ERRORS+=("No milestone defined")
+          fi
+        }
+
+        validate_category
+        validate_type
+        validate_title
+        validate_milestone
 
         if [ ${#ERRORS[@]} -gt 0 ]; then
           echo "::error::PR validation failed:"
@@ -100,5 +109,4 @@ runs:
           done
           exit 1
         fi
-
         echo "PR validation successful!"
