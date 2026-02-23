@@ -123,6 +123,7 @@ runs:
         
         # Add target directories (check which directories exist and only include them (excluding vendor and node_modules by specifying only what to analyze))
         TARGET_DIRS=()
+        TARGET_DIRS=("${{ inputs.module-name }}.php")
         if [ -d "controllers" ]; then
           TARGET_DIRS+=("controllers/")
         fi
