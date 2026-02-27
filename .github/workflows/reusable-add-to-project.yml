@@ -1,0 +1,23 @@
+name: Reusable Add Issue to Project
+
+on:
+  workflow_call:
+    inputs:
+      project-number:
+        description: 'Project number (ex: 48 for [BUG] Core)'
+        required: true
+        type: number
+    secrets:
+      GITHUB_TOKEN:
+        description: 'Organisation GitHub Token'
+        required: true
+
+jobs:
+  add-to-project:
+    name: Add issue to project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/orgs/PrestaShop/projects/${{ inputs.project-number }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
