@@ -8,7 +8,7 @@ on:
         required: true
         type: number
     secrets:
-      GITHUB_TOKEN:
+      TOKEN:
         description: 'Organisation GitHub Token'
         required: true
 
@@ -20,4 +20,4 @@ jobs:
       - uses: actions/add-to-project@v1
         with:
           project-url: https://github.com/orgs/PrestaShop/projects/${{ inputs.project-number }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.TOKEN }}
