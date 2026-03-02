@@ -33,6 +33,11 @@ inputs:
     required: false
     default: ""
 
+  phpstan-config-merge:
+    description: "Whether to merge the module config with ps-module-extension.neon. Set to 'false' when the module config already includes it."
+    required: false
+    default: "true"
+
   composer-version:
     description: "Composer version to use"
     required: false
@@ -139,23 +144,29 @@ runs:
 
         if [ -n "${{ inputs.phpstan-config }}" ]; then
           echo "Processing additional PHPStan configuration..."
-          
+
           # Check if the config file exists in the module directory
           MODULE_CONFIG_FILE="${{ inputs.phpstan-config }}"
           if [ -f "$MODULE_CONFIG_FILE" ]; then
             echo "✓ Found additional PHPStan config: $MODULE_CONFIG_FILE"
-            
-            # Create a temporary PHPStan config that includes both configs
-            TEMP_CONFIG="phpstan-temp.neon"
-            echo "includes:" > "$TEMP_CONFIG"
-            echo "  - $PHPSTAN_CONFIG" >> "$TEMP_CONFIG"
-            echo "  - $MODULE_CONFIG_FILE" >> "$TEMP_CONFIG"
-            
-            # Use the temporary config instead of the original
-            PHPSTAN_CONFIG="$TEMP_CONFIG"
-            echo "✓ Created merged PHPStan configuration: $TEMP_CONFIG"
-            echo "Generated config content:"
-            cat "$TEMP_CONFIG"
+
+            if [ "${{ inputs.phpstan-config-merge }}" = "false" ]; then
+              # Use the module config directly without merging (module already includes ps-module-extension.neon)
+              PHPSTAN_CONFIG="$MODULE_CONFIG_FILE"
+              echo "✓ Using module PHPStan config directly (merge disabled): $PHPSTAN_CONFIG"
+            else
+              # Create a temporary PHPStan config that includes both configs
+              TEMP_CONFIG="phpstan-temp.neon"
+              echo "includes:" > "$TEMP_CONFIG"
+              echo "  - $PHPSTAN_CONFIG" >> "$TEMP_CONFIG"
+              echo "  - $MODULE_CONFIG_FILE" >> "$TEMP_CONFIG"
+
+              # Use the temporary config instead of the original
+              PHPSTAN_CONFIG="$TEMP_CONFIG"
+              echo "✓ Created merged PHPStan configuration: $TEMP_CONFIG"
+              echo "Generated config content:"
+              cat "$TEMP_CONFIG"
+            fi
           else
             echo "⚠️  No additional PHPStan config file found: $MODULE_CONFIG_FILE"
           fi
