@@ -377,8 +377,13 @@ FIRST_TIME_CONTRIBUTORS_PAIRS=$(echo "$FIRST_TIME_CONTRIBUTORS_PAIRS" | sed '/^$
 
 # Format contributor outputs
 CONTRIBUTORS_CSV=$(echo "$NEW_CONTRIBUTORS_PAIRS" | paste -sd ',' - | sed 's/,/, /g')
-CONTRIBUTORS_GRID=$(echo "$NEW_CONTRIBUTOR_LOGINS" | sed 's/.*/"&"/' | paste -sd ' ' - | sed 's/^/{{< contributors-grid /; s/ *$/& >}}/')
 NEW_CONTRIBUTORS_CSV=$(echo "$FIRST_TIME_CONTRIBUTORS_PAIRS" | paste -sd ',' - | sed 's/,/, /g')
+
+CONTRIBUTORS_GRID_INNER=$(echo "$NEW_CONTRIBUTOR_LOGINS" | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd ' ')
+CONTRIBUTORS_GRID="{{< contributors-grid ${CONTRIBUTORS_GRID_INNER} / >}}"
+
+NEW_CONTRIBUTORS_GRID_INNER=$(echo "$FIRST_TIME_LOGINS" | sed '/^$/d' | sed 's/.*/"&"/' | paste -sd ' ')
+NEW_CONTRIBUTORS_GRID="{{< contributors-grid ${NEW_CONTRIBUTORS_GRID_INNER} / >}}"
 
 # -----------------------------------------------------------------------------
 # Summary output
@@ -393,6 +398,7 @@ if [[ -n "$FIRST_TIME_CONTRIBUTORS" ]]; then
   echo ""
   echo "=== New contributors ==="
   echo "$NEW_CONTRIBUTORS_CSV"
+  echo "$NEW_CONTRIBUTORS_GRID"
 fi
 
 # Export to GITHUB_OUTPUT if running in GitHub Actions
@@ -400,6 +406,7 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   echo "contributors=${CONTRIBUTORS_CSV}" >> "$GITHUB_OUTPUT"
   echo "contributors_grid=${CONTRIBUTORS_GRID}" >> "$GITHUB_OUTPUT"
   echo "new_contributors=${NEW_CONTRIBUTORS_CSV}" >> "$GITHUB_OUTPUT"
+  echo "new_contributors_grid=${NEW_CONTRIBUTORS_GRID}" >> "$GITHUB_OUTPUT"
   {
     echo "changelog<<CHANGELOG_EOF"
     echo "$CHANGELOG_SECTIONS"
