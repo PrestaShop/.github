@@ -1,0 +1,4 @@
+- name: "Waiting for QA"
+  color: '#fbca04'
+  description: "Status: action required, waiting for test feedback"
+  aliases: ["waiting for QA"]

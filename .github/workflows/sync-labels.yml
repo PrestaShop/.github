@@ -1,0 +1,21 @@
+name: ♻️ Sync Labels
+
+on:
+  workflow_dispatch:
+
+jobs:
+  labels:
+    name: ♻️ Sync labels
+    runs-on: ubuntu-22.04
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v3
+
+      - name: 🚀 Run Label Sync
+        uses: srealmoreno/label-sync-action@v2
+        with:
+          token: ${{ secrets.TOKEN }}
+          # Apply to all repositories
+          auto-discover-repos: true
+          # Clean labels not defined in the config file from the repo(s).
+          clean-labels: false
