@@ -1,0 +1,63 @@
+name: 'Mark stale issues'
+description: 'Marks old issues as stale with a friendly comment, then closes them after a grace period. Excludes specified labels. Applies to issues only (not PRs).'
+inputs:
+  days-before-stale:
+    description: 'Number of days of inactivity before an issue is marked stale'
+    required: false
+    default: '180'
+  days-before-close:
+    description: 'Number of days after the stale warning before the issue is closed (grace period)'
+    required: false
+    default: '30'
+  exempt-issue-labels:
+    description: 'Comma-separated list of labels to exclude from being marked stale'
+    required: false
+    default: ''
+  debug-only:
+    description: 'If true, log what would be done without making changes'
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Mark and close stale issues
+      uses: actions/stale@v10
+      with:
+        # Uses default GITHUB_TOKEN from the calling workflow
+
+        days-before-stale: ${{ inputs.days-before-stale }}
+        days-before-close: ${{ inputs.days-before-close }}
+
+        # Issues only (skip PRs)
+        days-before-pr-stale: -1
+        days-before-pr-close: -1
+
+        stale-issue-label: 'Stale'
+        close-issue-label: 'Stale Action Closed'
+        exempt-issue-labels: ${{ inputs.exempt-issue-labels }}
+
+        remove-stale-when-updated: true
+        remove-issue-stale-when-updated: true
+
+        debug-only: ${{ inputs.debug-only }}
+
+        operations-per-run: 100
+
+        stale-issue-message: |
+          👋 Hi there,
+
+          Thank you for opening this issue. We've noticed that **this issue has been open for more than ${{ inputs.days-before-stale }} days** with **no recent activity**. We want to keep our issue tracker focused and up to date.
+
+          **Is this issue still relevant to you?**
+
+          - If **yes**, please leave a short comment below (you or anyone else) to confirm that it's still relevant. We'll then remove the "stale" label and keep the issue open.
+          - If we don't hear back, we'll assume the issue is no longer needed. **A grace period of ${{ inputs.days-before-close }} days** will apply from this message. After that, the issue will be **automatically closed**.
+
+          We appreciate your contribution and understanding. 🙏
+
+        close-issue-message: |
+          🔒 **This issue has been automatically closed** because there was no response or activity after it was marked as stale and the **${{ inputs.days-before-close }}-day grace period** has ended.
+
+          If you believe this issue is **still relevant**, please feel free to **reopen it** and add a comment explaining why. We're happy to take another look.
+
+          Thank you for your participation in this repository.
