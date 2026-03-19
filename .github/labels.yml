@@ -1,4 +1,14 @@
 - name: "Waiting for QA"
   color: '#fbca04'
-  description: "Status: action required, waiting for test feedback"
+  description: "Status: Action required, Waiting for test feedback"
   aliases: ["waiting for QA"]
+- name: "Waiting for QA by Community"
+  color: '#fbca04'
+  description: "Status: Action required, Waiting for test feedback by Community"
+  aliases: ["QA by community"]
+- name: "QA ✔️"
+  color: '#b8ed50'
+  description: "Status: Check done, Code approved"
+- name: "QA ✔️ by Community"
+  color: '#b8ed50'
+  description: "Status: Check done by community member, Code approved"
