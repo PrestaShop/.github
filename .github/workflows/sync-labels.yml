@@ -14,7 +14,7 @@ jobs:
       - name: 🚀 Run Label Sync
         uses: srealmoreno/label-sync-action@v2
         with:
-          token: ${{ secrets.TOKEN }}
+          token: ${{ secrets.JARVIS_TOKEN }}
           # Apply to all repositories
           auto-discover-repos: true
           # Clean labels not defined in the config file from the repo(s).
