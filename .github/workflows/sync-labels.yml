@@ -6,10 +6,10 @@ on:
 jobs:
   labels:
     name: ♻️ Sync labels
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: ⤵️ Check out code from GitHub
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: 🚀 Run Label Sync
         uses: srealmoreno/label-sync-action@v2
@@ -17,5 +17,11 @@ jobs:
           token: ${{ secrets.JARVIS_TOKEN }}
           # Apply to all repositories
           auto-discover-repos: true
+          # Apply on org 
+          owner: "PrestaShop"
           # Clean labels not defined in the config file from the repo(s).
           clean-labels: false
+          exclude-archived-repos: true
+          exclude-disabled-repos: true
+          exclude-forked-repos: true
+          exclude-private-repos: true
