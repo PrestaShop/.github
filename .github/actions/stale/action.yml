@@ -17,6 +17,10 @@ inputs:
     description: 'If true, log what would be done without making changes'
     required: false
     default: 'false'
+  operations-per-run:
+    description: 'Maximum number of API operations per run (rate limiting)'
+    required: false
+    default: '100'
 runs:
   using: composite
   steps:
@@ -41,7 +45,7 @@ runs:
 
         debug-only: ${{ inputs.debug-only }}
 
-        operations-per-run: 100
+        operations-per-run: ${{ inputs.operations-per-run }}
 
         stale-issue-message: |
           👋 Hi there,
