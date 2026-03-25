@@ -10,13 +10,17 @@ inputs:
     required: false
     default: '30'
   exempt-issue-labels:
-    description: 'Comma-separated list of labels to exclude from being marked stale'
+    description: 'Comma-separated list of labels to exclude from being marked stale (the label "Converted to Discussion" is always excluded in addition)'
     required: false
     default: ''
   debug-only:
     description: 'If true, log what would be done without making changes'
     required: false
     default: 'false'
+  operations-per-run:
+    description: 'Maximum number of API operations per run (rate limiting)'
+    required: false
+    default: '100'
 runs:
   using: composite
   steps:
@@ -34,14 +38,15 @@ runs:
 
         stale-issue-label: 'Stale'
         close-issue-label: 'Stale Action Closed'
-        exempt-issue-labels: ${{ inputs.exempt-issue-labels }}
+        # Always exclude "Converted to Discussion" (GitHub-applied when an issue becomes a discussion)
+        exempt-issue-labels: ${{ inputs.exempt-issue-labels && format('{0},Converted to Discussion', inputs.exempt-issue-labels) || 'Converted to Discussion' }}
 
         remove-stale-when-updated: true
         remove-issue-stale-when-updated: true
 
         debug-only: ${{ inputs.debug-only }}
 
-        operations-per-run: 100
+        operations-per-run: ${{ inputs.operations-per-run }}
 
         stale-issue-message: |
           👋 Hi there,
