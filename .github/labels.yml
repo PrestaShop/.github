@@ -12,3 +12,9 @@
 - name: "QA ✔️ by Community"
   color: '#b8ed50'
   description: "Status: Check done by community member, Code approved"
+- name: "Need AI review"
+  color: '#fbca04'
+  description: "Trigger: Request an AI pre-review from Claude"
+- name: "AI reviewed"
+  color: '#b8ed50'
+  description: "Status: Claude AI has already pre-reviewed this PR"
