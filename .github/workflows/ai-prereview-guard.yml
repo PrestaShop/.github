@@ -73,16 +73,39 @@ jobs:
           ACTOR: ${{ inputs.actor }}
           TEAM: ${{ inputs.team-slug }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          # Debug: check if token is provided
+          if [ -z "$TOKEN" ]; then
+            echo "::error::org-read-token secret is empty — the secret may not be configured or not accessible from the calling repository."
+            echo "⛔ **Debug:** org-read-token secret is empty. Check that the secret exists and is accessible." >> "$GITHUB_STEP_SUMMARY"
+            echo "is-member=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TOKEN_PREFIX="${TOKEN:0:4}"
+          echo "::debug::Token is set (starts with ${TOKEN_PREFIX}…, length=${#TOKEN})"
+          echo "📋 **Debug:** Token is set (length=${#TOKEN}, prefix=${TOKEN_PREFIX}…)" >> "$GITHUB_STEP_SUMMARY"
+
+          API_URL="https://api.github.com/orgs/PrestaShop/teams/$TEAM/memberships/$ACTOR"
+          echo "📋 **Debug:** Calling $API_URL" >> "$GITHUB_STEP_SUMMARY"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/orgs/PrestaShop/teams/$TEAM/memberships/$ACTOR")
+            "$API_URL")
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "📋 **Debug:** HTTP status=$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
           if [ "$STATUS" = "200" ]; then
+            ROLE=$(echo "$BODY" | jq -r '.role // "unknown"')
+            STATE=$(echo "$BODY" | jq -r '.state // "unknown"')
+            echo "📋 **Debug:** Membership role=$ROLE, state=$STATE" >> "$GITHUB_STEP_SUMMARY"
             echo "is-member=true" >> "$GITHUB_OUTPUT"
-            echo "✅ $ACTOR is a member of $TEAM — Claude review will run." >> "$GITHUB_STEP_SUMMARY"
+            echo "✅ $ACTOR is a member of $TEAM (role=$ROLE, state=$STATE) — Claude review will run." >> "$GITHUB_STEP_SUMMARY"
           else
+            echo "📋 **Debug:** Response body: $BODY" >> "$GITHUB_STEP_SUMMARY"
             echo "is-member=false" >> "$GITHUB_OUTPUT"
-            echo "⛔ $ACTOR is not a member of $TEAM — skipping Claude review." >> "$GITHUB_STEP_SUMMARY"
+            echo "⛔ $ACTOR is not a member of $TEAM (HTTP $STATUS) — skipping Claude review." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # Step 3: Evaluate combined result
