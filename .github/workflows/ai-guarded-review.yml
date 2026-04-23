@@ -1,0 +1,254 @@
+name: "[Reusable] AI-guarded review (guard + Claude review + label management)"
+
+on:
+  workflow_call:
+    inputs:
+      team-slug:
+        required: true
+        type: string
+        description: "Team slug to check against (e.g. prestashop-sa)"
+      actor:
+        required: true
+        type: string
+        description: "GitHub login to verify (github.event.sender.login)"
+      pr-number:
+        required: true
+        type: number
+        description: "PR number"
+      repository:
+        required: true
+        type: string
+        description: "owner/repo (e.g. PrestaShop/ps_apiresources)"
+      prompt:
+        required: true
+        type: string
+        description: "The review prompt to pass to Claude"
+      trigger-label:
+        required: false
+        type: string
+        default: "Need AI review"
+        description: "Label that triggers the review (removed on completion or guard failure)"
+      reviewed-label:
+        required: false
+        type: string
+        default: "AI reviewed"
+        description: "Label added after a successful review"
+      claude-model:
+        required: false
+        type: string
+        default: "claude-sonnet-4-6"
+        description: "Claude model to use for the review"
+      max-turns:
+        required: false
+        type: number
+        default: 30
+        description: "Maximum number of turns for Claude"
+      allowed-tools:
+        required: false
+        type: string
+        default: "Read,Glob,Grep,LS,WebFetch,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
+        description: "Comma-separated list of tools Claude is allowed to use"
+    secrets:
+      org-read-token:
+        required: true
+        description: "PAT with read:org scope for team membership check"
+      github-token:
+        required: true
+        description: "GITHUB_TOKEN from the calling repository"
+      anthropic-api-key:
+        required: true
+        description: "Anthropic API key for Claude"
+
+jobs:
+  # Step 1: Check if PR was already reviewed
+  check-label:
+    runs-on: ubuntu-latest
+    outputs:
+      already-reviewed: ${{ steps.check.outputs.already-reviewed }}
+    steps:
+      - name: Check for reviewed label
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.github-token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          REPO: ${{ inputs.repository }}
+          LABEL: ${{ inputs.reviewed-label }}
+        run: |
+          HAS=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels \
+            | jq -r --arg l "$LABEL" '[.labels[].name] | contains([$l])')
+          echo "already-reviewed=$HAS" >> "$GITHUB_OUTPUT"
+          if [ "$HAS" = "true" ]; then
+            echo "⚠️ PR #$PR_NUMBER already has the '$LABEL' label — skipping Claude review." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Step 2: Check team membership only if label is absent
+  check-membership:
+    runs-on: ubuntu-latest
+    needs: check-label
+    if: needs.check-label.outputs.already-reviewed != 'true'
+    outputs:
+      is-member: ${{ steps.check.outputs.is-member }}
+    steps:
+      - name: Check team membership
+        id: check
+        env:
+          TOKEN: ${{ secrets.org-read-token }}
+          ACTOR: ${{ inputs.actor }}
+          TEAM: ${{ inputs.team-slug }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::org-read-token secret is empty — the secret may not be configured or not accessible from the calling repository."
+            echo "⛔ **Debug:** org-read-token secret is empty. Check that the secret exists and is accessible." >> "$GITHUB_STEP_SUMMARY"
+            echo "is-member=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TOKEN_PREFIX="${TOKEN:0:4}"
+          echo "::debug::Token is set (starts with ${TOKEN_PREFIX}…, length=${#TOKEN})"
+          echo "📋 **Debug:** Token is set (length=${#TOKEN}, prefix=${TOKEN_PREFIX}…)" >> "$GITHUB_STEP_SUMMARY"
+
+          API_URL="https://api.github.com/orgs/PrestaShop/teams/$TEAM/memberships/$ACTOR"
+          echo "📋 **Debug:** Calling $API_URL" >> "$GITHUB_STEP_SUMMARY"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL")
+          STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "📋 **Debug:** HTTP status=$STATUS" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" = "200" ]; then
+            ROLE=$(echo "$BODY" | jq -r '.role // "unknown"')
+            STATE=$(echo "$BODY" | jq -r '.state // "unknown"')
+            echo "📋 **Debug:** Membership role=$ROLE, state=$STATE" >> "$GITHUB_STEP_SUMMARY"
+            echo "is-member=true" >> "$GITHUB_OUTPUT"
+            echo "✅ $ACTOR is a member of $TEAM (role=$ROLE, state=$STATE) — Claude review will run." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "📋 **Debug:** Response body: $BODY" >> "$GITHUB_STEP_SUMMARY"
+            echo "is-member=false" >> "$GITHUB_OUTPUT"
+            echo "⛔ $ACTOR is not a member of $TEAM (HTTP $STATUS) — skipping Claude review." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Step 3: Evaluate guard
+  gate:
+    runs-on: ubuntu-latest
+    needs: [check-label, check-membership]
+    if: always()
+    outputs:
+      can-run: ${{ steps.evaluate.outputs.can-run }}
+    steps:
+      - name: Evaluate guard conditions
+        id: evaluate
+        env:
+          IS_MEMBER: ${{ needs.check-membership.outputs.is-member }}
+          ALREADY_REVIEWED: ${{ needs.check-label.outputs.already-reviewed }}
+        run: |
+          if [ "$IS_MEMBER" = "true" ] && [ "$ALREADY_REVIEWED" != "true" ]; then
+            echo "can-run=true" >> "$GITHUB_OUTPUT"
+            echo "✅ All guards passed — Claude review can run." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "can-run=false" >> "$GITHUB_OUTPUT"
+            echo "🚫 Guard blocked: is-member=$IS_MEMBER, already-reviewed=$ALREADY_REVIEWED." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Step 4: Guard failed — remove trigger label and fail
+  guard-failed:
+    needs: gate
+    if: needs.gate.outputs.can-run != 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.github-token }}
+    steps:
+      - name: Remove trigger label and fail
+        run: |
+          gh pr edit ${{ inputs.pr-number }} --repo "${{ inputs.repository }}" \
+            --remove-label "${{ inputs.trigger-label }}"
+          echo "::error::Guard check failed — the actor is not a member of the required team or the PR was already reviewed."
+          echo "⛔ Guard check failed — Claude review will not run. Label '${{ inputs.trigger-label }}' removed." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+  # Step 5: Run Claude review
+  ai-review:
+    needs: gate
+    if: needs.gate.outputs.can-run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.github-token }}
+      PR_NUMBER: ${{ inputs.pr-number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude review
+        id: claude
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          github_token: ${{ secrets.github-token }}
+          claude_args: '--model ${{ inputs.claude-model }} --max-turns ${{ inputs.max-turns }} --allowedTools "${{ inputs.allowed-tools }}"'
+          prompt: ${{ inputs.prompt }}
+
+      - name: Validate Claude execution
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          STEP_OUTCOME: ${{ steps.claude.outcome }}
+        run: |
+          if [ ! -f "$EXECUTION_FILE" ]; then
+            echo "::error::Claude execution output file not found."
+            exit 1
+          fi
+          # The execution file can be a JSON array (conversation log) or a single object.
+          # When it's an array, the result object is the last element.
+          FILE_TYPE=$(jq -r 'type' "$EXECUTION_FILE")
+          if [ "$FILE_TYPE" = "array" ]; then
+            RESULT=$(jq '.[-1]' "$EXECUTION_FILE")
+          else
+            RESULT=$(jq '.' "$EXECUTION_FILE")
+          fi
+          IS_ERROR=$(echo "$RESULT" | jq -r '.is_error // false')
+          SUBTYPE=$(echo "$RESULT" | jq -r '.subtype // "unknown"')
+          NUM_TURNS=$(echo "$RESULT" | jq -r '.num_turns // 0')
+          DENIALS=$(echo "$RESULT" | jq -r '.permission_denials_count // 0')
+          COST=$(echo "$RESULT" | jq -r '.total_cost_usd // 0')
+          echo "## Claude execution report" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status | $SUBTYPE |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Turns used | $NUM_TURNS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Permission denials | $DENIALS |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cost | \$${COST} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Error | $IS_ERROR |" >> "$GITHUB_STEP_SUMMARY"
+          FAILED=false
+          if [ "$DENIALS" -gt 0 ] && [ "$DENIALS" -ge "$NUM_TURNS" ]; then
+            echo "::error::Claude was denied permissions on almost every turn ($DENIALS/$NUM_TURNS). Check allowed_tools configuration."
+            FAILED=true
+          fi
+          if [ "$SUBTYPE" = "error_max_turns" ]; then
+            echo "::warning::Claude reached the maximum number of turns ($NUM_TURNS). The review may be incomplete."
+          fi
+          if [ "$IS_ERROR" = "true" ] && [ "$FAILED" = "true" ]; then
+            exit 1
+          fi
+          if [ "$IS_ERROR" = "true" ]; then
+            echo "::warning::Claude reported an error ($SUBTYPE) but may have posted partial results."
+          fi
+
+      - name: Update labels
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "${{ inputs.repository }}" \
+            --add-label "${{ inputs.reviewed-label }}" \
+            --remove-label "${{ inputs.trigger-label }}"
+          echo "✅ Label '${{ inputs.reviewed-label }}' added, '${{ inputs.trigger-label }}' removed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary
+        run: |
+          echo "## Review summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **PR:** #$PR_NUMBER" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Actor:** ${{ inputs.actor }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Model:** ${{ inputs.claude-model }}" >> "$GITHUB_STEP_SUMMARY"
