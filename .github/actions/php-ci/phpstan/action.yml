@@ -112,15 +112,25 @@ runs:
           cd -
         fi
         
-        PHPSTAN_CONFIG="vendor/prestashop/php-dev-tools/phpstan/ps-module-extension.neon"
-        
-        if [ -f "$PHPSTAN_CONFIG" ]; then
-          echo "✓ Using Php-dev-tools PHPStan configuration: $PHPSTAN_CONFIG"
+        PS_MODULE_EXTENSION="vendor/prestashop/php-dev-tools/phpstan/ps-module-extension.neon"
+
+        if [ -f "$PS_MODULE_EXTENSION" ]; then
+          echo "✓ Using Php-dev-tools PHPStan configuration: $PS_MODULE_EXTENSION"
         else
-          echo "❌ Php-dev-tools PHPStan configuration not found: $PHPSTAN_CONFIG"
-          echo "Running PHPStan without configuration file..."
-          PHPSTAN_CONFIG=""
+          echo "❌ Php-dev-tools PHPStan configuration not found: $PS_MODULE_EXTENSION"
+          echo "Continuing without it..."
+          PS_MODULE_EXTENSION=""
         fi
+
+        # PHPStan takes the PHP language level it analyses with from the analysed project's
+        # composer platform declaration, never from the PHP binary it runs on. Without this
+        # the php-version input only changes the runtime, and every entry of a matrix ends up
+        # analysing the same level. Emitted as its own include, placed before the module
+        # config below, so a module that deliberately pins phpVersion still wins.
+        PHP_VERSION_ID=$(echo "${{ inputs.php-version }}" | awk -F. '{ printf "%d%02d00", $1, ($2 == "" ? 0 : $2) }')
+        PHP_VERSION_CONFIG="phpstan-php-version.neon"
+        printf 'parameters:\n    phpVersion: %s\n' "$PHP_VERSION_ID" > "$PHP_VERSION_CONFIG"
+        echo "✓ Analysing at PHP language level $PHP_VERSION_ID (from php-version ${{ inputs.php-version }})"
         
         echo "Setting PrestaShop environment variable..."
         export _PS_ROOT_DIR_="../../"
@@ -142,35 +152,43 @@ runs:
           TARGET_DIRS+=("classes/")
         fi
 
+        MODULE_CONFIG_FILE=""
         if [ -n "${{ inputs.phpstan-config }}" ]; then
           echo "Processing additional PHPStan configuration..."
 
           # Check if the config file exists in the module directory
-          MODULE_CONFIG_FILE="${{ inputs.phpstan-config }}"
-          if [ -f "$MODULE_CONFIG_FILE" ]; then
+          if [ -f "${{ inputs.phpstan-config }}" ]; then
+            MODULE_CONFIG_FILE="${{ inputs.phpstan-config }}"
             echo "✓ Found additional PHPStan config: $MODULE_CONFIG_FILE"
-
-            if [ "${{ inputs.phpstan-config-merge }}" = "false" ]; then
-              # Use the module config directly without merging (module already includes ps-module-extension.neon)
-              PHPSTAN_CONFIG="$MODULE_CONFIG_FILE"
-              echo "✓ Using module PHPStan config directly (merge disabled): $PHPSTAN_CONFIG"
-            else
-              # Create a temporary PHPStan config that includes both configs
-              TEMP_CONFIG="phpstan-temp.neon"
-              echo "includes:" > "$TEMP_CONFIG"
-              echo "  - $PHPSTAN_CONFIG" >> "$TEMP_CONFIG"
-              echo "  - $MODULE_CONFIG_FILE" >> "$TEMP_CONFIG"
-
-              # Use the temporary config instead of the original
-              PHPSTAN_CONFIG="$TEMP_CONFIG"
-              echo "✓ Created merged PHPStan configuration: $TEMP_CONFIG"
-              echo "Generated config content:"
-              cat "$TEMP_CONFIG"
-            fi
           else
-            echo "⚠️  No additional PHPStan config file found: $MODULE_CONFIG_FILE"
+            echo "⚠️  No additional PHPStan config file found: ${{ inputs.phpstan-config }}"
           fi
         fi
+
+        # Order matters: neon resolves a key from the last include that defines it, so the
+        # module config comes last and keeps the final word over the injected phpVersion.
+        INCLUDES=()
+
+        # Skipped when merging is disabled: the module config already includes it itself
+        if [ -n "$PS_MODULE_EXTENSION" ] \
+          && { [ -z "$MODULE_CONFIG_FILE" ] || [ "${{ inputs.phpstan-config-merge }}" != "false" ]; }; then
+          INCLUDES+=("$PS_MODULE_EXTENSION")
+        fi
+
+        INCLUDES+=("$PHP_VERSION_CONFIG")
+
+        if [ -n "$MODULE_CONFIG_FILE" ]; then
+          INCLUDES+=("$MODULE_CONFIG_FILE")
+        fi
+
+        PHPSTAN_CONFIG="phpstan-temp.neon"
+        echo "includes:" > "$PHPSTAN_CONFIG"
+        for INCLUDE in "${INCLUDES[@]}"; do
+          echo "  - $INCLUDE" >> "$PHPSTAN_CONFIG"
+        done
+        echo "✓ Created PHPStan configuration: $PHPSTAN_CONFIG"
+        echo "Generated config content:"
+        cat "$PHPSTAN_CONFIG"
         
         # Build the final command array
         PHPSTAN_ARGS=("analyse" "--verbose" "--error-format=github")
