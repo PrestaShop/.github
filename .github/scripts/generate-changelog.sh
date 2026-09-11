@@ -76,21 +76,96 @@ parse_table_cell() {
 }
 
 # -----------------------------------------------------------------------------
-# Use GitHub compare API to find merge commits between PREVIOUS_REF and TARGET_REF,
-# then extract PR numbers. Works identically on Linux and macOS (no git log needed).
+# Use GitHub compare API to list the merge commits between PREVIOUS_REF and
+# TARGET_REF. Works identically on Linux and macOS (no git log needed).
 # The API accepts tags, branches, and commit SHAs as refs.
 # -----------------------------------------------------------------------------
 echo "Comparing ${PREVIOUS_REF}...${TARGET_REF} in ${REPO} via GitHub API..."
 
-COMPARE_JSON=$(gh api "repos/${REPO}/compare/${PREVIOUS_REF}...${TARGET_REF}" \
+# --paginate emits one JSON document per page, jq -s merges them into one array.
+MERGE_COMMITS_JSON=$(gh api "repos/${REPO}/compare/${PREVIOUS_REF}...${TARGET_REF}" \
   --paginate \
-  -q '[.commits[] | select(.parents | length > 1)]' 2>/dev/null || echo '[]')
+  -q '[.commits[] | select(.parents | length > 1) | {sha: .sha, message: .commit.message}]' 2>/dev/null \
+  | jq -s 'add // []' 2>/dev/null || echo '[]')
 
-# Extract unique PR numbers from merge commit messages ("Merge pull request #1234 ...")
-PR_NUMBERS=$(echo "$COMPARE_JSON" | jq -r '
-  [.[] | .commit.message
-    | capture("Merge pull request #(?<n>[0-9]+)") .n
-  ] | unique | .[]' 2>/dev/null || true)
+# SHAs of the merge commits of the range, used to verify that a resolved PR was
+# really merged here (see pr_merged_in_range).
+MERGE_SHAS_FILE=$(mktemp)
+echo "$MERGE_COMMITS_JSON" | jq -r '.[].sha' > "$MERGE_SHAS_FILE"
+echo "Found $(wc -l < "$MERGE_SHAS_FILE" | tr -d ' ') merge commit(s)."
+
+# -----------------------------------------------------------------------------
+# List the PRs of REPO that GitHub associates with the given commits.
+# This is authoritative: a number obtained this way always designates a PR of
+# REPO, unlike a number parsed from a commit message, which may come from a merge
+# commit created in another repository (private security mirror, imported
+# history, ...) and collide with an unrelated PR of REPO.
+# Commits are queried in batches through the GraphQL API to keep the number of
+# requests low (one request per 100 commits).
+# -----------------------------------------------------------------------------
+associated_pr_numbers() {
+  local sha_file="$1"
+  local owner="${REPO%%/*}"
+  local name="${REPO##*/}"
+  local batch_dir batch query sha i
+
+  [[ -s "$sha_file" ]] || return 0
+
+  batch_dir=$(mktemp -d)
+  split -l 100 "$sha_file" "${batch_dir}/batch_"
+  for batch in "${batch_dir}"/batch_*; do
+    query="${batch}.graphql"
+    {
+      echo "{ repository(owner: \"${owner}\", name: \"${name}\") {"
+      i=0
+      while read -r sha; do
+        [[ -z "$sha" ]] && continue
+        echo "  c${i}: object(expression: \"${sha}\") { ... on Commit { associatedPullRequests(first: 10) { nodes { number repository { nameWithOwner } } } } }"
+        i=$((i + 1))
+      done < "$batch"
+      echo "} }"
+    } > "$query"
+    gh api graphql -F query=@"$query" -q "
+      [.data.repository[]
+        | select(. != null)
+        | .associatedPullRequests.nodes[]
+        | select(.repository.nameWithOwner == \"${REPO}\")
+        | .number] | .[]" 2>/dev/null || true
+  done
+  rm -rf "$batch_dir"
+}
+
+# -----------------------------------------------------------------------------
+# Fetch a PR (title, author, merge commit) from a given repository.
+# -----------------------------------------------------------------------------
+fetch_pr() {
+  gh pr view "$1" --repo "$2" --json number,title,author,mergeCommit -q '.' 2>/dev/null || echo ''
+}
+
+# -----------------------------------------------------------------------------
+# True when the PR was merged by one of the merge commits of the range.
+# Rejects PRs that are still open and PRs whose number was borrowed from another
+# repository.
+# -----------------------------------------------------------------------------
+pr_merged_in_range() {
+  local merge_sha
+  merge_sha=$(echo "$1" | jq -r '.mergeCommit.oid // ""')
+  [[ -n "$merge_sha" ]] && grep -qxF "$merge_sha" "$MERGE_SHAS_FILE"
+}
+
+if [[ -z "$FALLBACK_REPO" ]]; then
+  # Ask GitHub which PR of REPO introduced each merge commit.
+  PR_NUMBERS=$(associated_pr_numbers "$MERGE_SHAS_FILE" | sort -n -u)
+else
+  # REPO is a private mirror: its history carries merge commits created in the
+  # upstream repository, whose PR numbers exist only in the commit messages.
+  # Association cannot be used here, so numbers are parsed and every PR resolved
+  # in REPO is then checked against the merge commits of the range.
+  PR_NUMBERS=$(echo "$MERGE_COMMITS_JSON" | jq -r '
+    [.[] | .message
+      | capture("Merge pull request #(?<n>[0-9]+)") .n
+    ] | unique | .[]' 2>/dev/null || true)
+fi
 
 if [[ -z "$PR_NUMBERS" ]]; then
   echo "::error::No merged PRs found between ${PREVIOUS_REF} and ${TARGET_REF}."
@@ -103,13 +178,26 @@ else
   PRS_JSON="[]"
   for number in $PR_NUMBERS; do
     pr_repo="$REPO"
-    pr_info=$(gh pr view "$number" --repo "$pr_repo" --json number,title,author -q '.' 2>/dev/null || echo '')
+    out_of_range=0
+    pr_info=$(fetch_pr "$number" "$pr_repo")
+    # A PR of REPO that was not merged by one of the merge commits of the range
+    # does not belong to this release: the number comes from a merge commit
+    # created in another repository and happens to exist in REPO as well.
+    if [[ -n "$pr_info" ]] && ! pr_merged_in_range "$pr_info"; then
+      out_of_range=1
+      pr_info=''
+    fi
     if [[ -z "$pr_info" && -n "$FALLBACK_REPO" ]]; then
       pr_repo="$FALLBACK_REPO"
-      pr_info=$(gh pr view "$number" --repo "$pr_repo" --json number,title,author -q '.' 2>/dev/null || echo '')
+      pr_info=$(fetch_pr "$number" "$pr_repo")
+      [[ -n "$pr_info" ]] && out_of_range=0
     fi
     if [[ -n "$pr_info" ]]; then
-      PRS_JSON=$(echo "$PRS_JSON" | jq --argjson pr "$pr_info" --arg repo "$pr_repo" '. + [$pr + {repo: $repo}]')
+      PRS_JSON=$(echo "$PRS_JSON" | jq --argjson pr "$pr_info" --arg repo "$pr_repo" \
+        '. + [($pr | del(.mergeCommit)) + {repo: $repo}]')
+    elif [[ "$out_of_range" -eq 1 ]]; then
+      echo "::notice::Ignoring PR #${number} of ${REPO}: not merged between ${PREVIOUS_REF} and ${TARGET_REF}." >&2
+      continue
     else
       if [[ -n "$FALLBACK_REPO" ]]; then
         echo "::error::Could not fetch PR #${number} (searched in ${REPO} and ${FALLBACK_REPO})." >&2
@@ -130,7 +218,7 @@ TYPE_ORDER=( "New feature" "Improvement" "Bug fix" "Refactoring" "Other" )
 CATEGORIZED_FILE=$(mktemp)
 CATEGORIZED_FORMATTED_FILE=$(mktemp)
 ERRORS_FILE=$(mktemp)
-trap 'rm -f "$CATEGORIZED_FILE" "$CATEGORIZED_FORMATTED_FILE" "$ERRORS_FILE"' EXIT
+trap 'rm -f "$CATEGORIZED_FILE" "$CATEGORIZED_FORMATTED_FILE" "$ERRORS_FILE" "$MERGE_SHAS_FILE"' EXIT
 
 # -----------------------------------------------------------------------------
 # Fetch body + milestone per PR, parse Type?/Category?, collect errors (Other, title, milestone)
