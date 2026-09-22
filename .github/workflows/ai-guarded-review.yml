@@ -63,7 +63,7 @@ jobs:
   # Step 1: Check if PR was already reviewed
   check-label:
     name: Check reviewed label
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       already-reviewed: ${{ steps.check.outputs.already-reviewed }}
     steps:
@@ -85,7 +85,7 @@ jobs:
   # Step 2: Check team membership only if label is absent
   check-membership:
     name: Check team membership
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: check-label
     if: needs.check-label.outputs.already-reviewed != 'true'
     outputs:
@@ -105,7 +105,7 @@ jobs:
   # Step 3: Evaluate guard
   gate:
     name: Evaluate guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [check-label, check-membership]
     if: always()
     outputs:
@@ -130,7 +130,7 @@ jobs:
     name: Guard failed
     needs: gate
     if: needs.gate.outputs.can-run != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.github-token }}
     steps:
@@ -147,7 +147,7 @@ jobs:
     name: Claude AI review
     needs: gate
     if: needs.gate.outputs.can-run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write
