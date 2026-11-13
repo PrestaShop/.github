@@ -128,6 +128,26 @@ runs:
         # analysing the same level. Emitted as its own include, placed before the module
         # config below, so a module that deliberately pins phpVersion still wins.
         PHP_VERSION_ID=$(echo "${{ inputs.php-version }}" | awk -F. '{ printf "%d%02d00", $1, ($2 == "" ? 0 : $2) }')
+
+        # The PHPStan in use is the one locked by the PrestaShop version under test, and older
+        # ones reject a phpVersion newer than they know (PHPStan 1.12, shipped with PS 9.1 and
+        # 9.2, stops at 80499). Read the upper bound from the PHPStan parameters schema and
+        # clamp to it, so a newer php-version still runs, analysed at the highest level known.
+        PHPSTAN_PHAR="../../vendor/phpstan/phpstan/phpstan.phar"
+        PHPSTAN_MAX_PHP_VERSION_ID=""
+        if [ -f "$PHPSTAN_PHAR" ]; then
+          PHPSTAN_MAX_PHP_VERSION_ID=$(php -r '
+            $schema = @file_get_contents("phar://" . realpath($argv[1]) . "/conf/parametersSchema.neon");
+            if ($schema !== false && preg_match("/phpVersion:[^\n]*?max\((\d+)\)/", $schema, $m)) {
+                echo $m[1];
+            }
+          ' "$PHPSTAN_PHAR" 2>/dev/null || true)
+        fi
+        if [ -n "$PHPSTAN_MAX_PHP_VERSION_ID" ] && [ "$PHP_VERSION_ID" -gt "$PHPSTAN_MAX_PHP_VERSION_ID" ]; then
+          echo "::warning title=PHPStan phpVersion clamped::PHPStan $(../../vendor/bin/phpstan --version --no-ansi 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) supports phpVersion up to $PHPSTAN_MAX_PHP_VERSION_ID, analysing at that level instead of $PHP_VERSION_ID (php-version ${{ inputs.php-version }})."
+          PHP_VERSION_ID="$PHPSTAN_MAX_PHP_VERSION_ID"
+        fi
+
         PHP_VERSION_CONFIG="phpstan-php-version.neon"
         printf 'parameters:\n    phpVersion: %s\n' "$PHP_VERSION_ID" > "$PHP_VERSION_CONFIG"
         echo "✓ Analysing at PHP language level $PHP_VERSION_ID (from php-version ${{ inputs.php-version }})"
